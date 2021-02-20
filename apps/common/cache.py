@@ -122,6 +122,16 @@ class Cache(metaclass=CacheBase):
                 self.set_data(data)
                 return data
 
+    def expire_fields_with_lock(self, *fields):
+        with DistributedLock(name=f'{self.key}.refresh'):
+            data = self.get_data()
+            if data is not None:
+                logger.info(f'CACHE: {self.key} expire fileds {fields}')
+                for f in fields:
+                    data.pop(f)
+                self.set_data(data)
+                return data
+
     def refresh(self, *fields):
         if not fields:
             # 没有指定 field 要刷新所有的值
@@ -146,10 +156,13 @@ class Cache(metaclass=CacheBase):
     def reload(self):
         self._data = None
 
-    def delete(self):
-        self._data = None
-        logger.info(f'CACHE: delete {self.key}')
-        cache.delete(self.key)
+    def expire(self, *fields):
+        if not fields:
+            self._data = None
+            logger.info(f'CACHE: delete {self.key}')
+            cache.delete(self.key)
+        else:
+            self.expire_fields_with_lock(*fields)
 
 
 class CacheValueDesc:
@@ -167,7 +180,8 @@ class CacheValueDesc:
             return self
         if self.field_name not in instance.data:
             instance.refresh(self.field_name)
-        value = instance.data[self.field_name]
+        # 防止边界情况没有值，报错
+        value = instance.data.get(self.field_name)
         return value
 
     def compute_value(self, instance: Cache):
